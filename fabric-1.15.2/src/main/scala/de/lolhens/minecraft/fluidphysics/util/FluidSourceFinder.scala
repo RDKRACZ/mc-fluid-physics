@@ -1,6 +1,8 @@
 package de.lolhens.minecraft.fluidphysics.util
 
+import de.lolhens.minecraft.fluidphysics.mixin.FlowableFluidAccessor
 import de.lolhens.minecraft.fluidphysics.{FluidPhysicsMod, horizontal}
+import net.minecraft.block.{BlockState, FluidBlock, FluidDrainable, FluidFillable}
 import net.minecraft.fluid.{BaseFluid, Fluid, FluidState}
 import net.minecraft.util.math.{BlockPos, Direction}
 import net.minecraft.world.IWorld
@@ -13,17 +15,20 @@ object FluidSourceFinder {
 
   def setOf(blockPos: java.util.Collection[BlockPos]): mutable.Set[BlockPos] = blockPos.asScala.to(mutable.Set)
 
+  @inline
   def findSource(world: IWorld,
                  blockPos: BlockPos,
                  fluid: Fluid): Option[BlockPos] =
     findSource(world, blockPos, fluid, Direction.UP)
 
+  @inline
   def findSource(world: IWorld,
                  blockPos: BlockPos,
                  fluid: Fluid,
                  direction: Direction): Option[BlockPos] =
     findSource(world, blockPos, fluid, direction, mutable.Set.empty, ignoreFirst = false, ignoreLevel = false, defaultMaxIterations)
 
+  @inline
   def findSource(world: IWorld,
                  blockPos: BlockPos,
                  fluid: Fluid,
@@ -33,6 +38,7 @@ object FluidSourceFinder {
                  ignoreLevel: Boolean): Option[BlockPos] =
     findSource(world, blockPos, fluid, direction, ignoreBlocks, ignoreFirst, ignoreLevel, defaultMaxIterations)
 
+  @inline
   def findSource(world: IWorld,
                  blockPos: BlockPos,
                  fluid: Fluid,
@@ -123,5 +129,39 @@ object FluidSourceFinder {
     }
 
     None
+  }
+
+  def moveSource(world: IWorld,
+                 srcPos: BlockPos,
+                 dstPos: BlockPos,
+                 dstState: BlockState,
+                 fluid: BaseFluid,
+                 still: FluidState): Unit = {
+    // Drain source block
+    val srcState = world.getBlockState(srcPos)
+    srcState.getBlock match {
+      case bucketPickup: FluidDrainable if !bucketPickup.isInstanceOf[FluidBlock] =>
+        bucketPickup.tryDrainFluid(world, srcPos, srcState)
+
+      case _ =>
+        if (!srcState.isAir)
+          fluid.asInstanceOf[FlowableFluidAccessor].callBeforeBreakingBlock(world, srcPos, srcState)
+
+        val newSourceLevel = still.getLevel - 1
+        val newSourceFluidState = fluid.getFlowing(newSourceLevel, false)
+        world.setBlockState(srcPos, newSourceFluidState.getBlockState, 3)
+    }
+
+    // Flow source block to new position
+    dstState.getBlock match {
+      case liquidBlockContainer: FluidFillable =>
+        liquidBlockContainer.tryFillWithFluid(world, dstPos, dstState, still)
+
+      case _ =>
+        if (!dstState.isAir)
+          fluid.asInstanceOf[FlowableFluidAccessor].callBeforeBreakingBlock(world, dstPos, dstState)
+
+        world.setBlockState(dstPos, still.getBlockState, 3)
+    }
   }
 }
